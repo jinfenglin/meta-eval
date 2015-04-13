@@ -37,20 +37,23 @@
          (eval-sequence (begin-actions exp) env))
         ((cond? exp) (mc-eval (cond->if exp) env))
         ((application? exp)
-         (mc-apply (mc-eval (operator exp) env)
-                   (list-of-values (operands exp) env)))
+         (mc-apply (actual-value (operator exp) env)
+                   ;(list-of-values (operands exp) env)
+                   (operands exp)
+                   env))
          (else
          (error "Unknown expression type -- EVAL" exp))))
 
-(define (mc-apply procedure arguments)
+
+(define (mc-apply procedure arguments env)
   (cond ((primitive-procedure? procedure)
-         (apply-primitive-procedure procedure arguments))
+         (apply-primitive-procedure procedure (list-of-arg-values arguments env)))
         ((compound-procedure? procedure)
          (eval-sequence
            (procedure-body procedure)
            (extend-environment
-             (procedure-parameters procedure)
-             arguments
+             (remove-delay-tag (procedure-parameters procedure))
+             (list-of-hybered-args arguments (procedure-parameters procedure) env) ; pass parameters to trace delayed-label
              (procedure-environment procedure))))
         (else
          (error
@@ -64,12 +67,12 @@
             (list-of-values (rest-operands exps) env))))
 
 (define (eval-if exp env)
-  (if (true? (mc-eval (if-predicate exp) env))
+  (if (true? (actual-value (if-predicate exp) env))
       (mc-eval (if-consequent exp) env)
       (mc-eval (if-alternative exp) env)))
 
 (define (eval-sequence exps env)
-  (cond ((last-exp? exps) (mc-eval (first-exp exps) env))
+  (cond ((last-exp? exps) (actual-value (first-exp exps) env))
         (else (mc-eval (first-exp exps) env)
               (eval-sequence (rest-exps exps) env))))
 
@@ -124,7 +127,8 @@
   (if (symbol? (cadr exp))
       (caddr exp)
       (make-lambda (cdadr exp)
-                   (cddr exp))))
+                   (cddr exp)))
+  )
 
 (define (lambda? exp) (tagged-list? exp 'lambda))
 
@@ -133,7 +137,6 @@
 
 (define (make-lambda parameters body)
   (cons 'lambda (cons parameters body)))
-
 
 (define (if? exp) (tagged-list? exp 'if))
 
@@ -348,7 +351,7 @@
   (prompt-for-input input-prompt)
   (let ((input (read)))
     ;(display (exp-list input))
-    (let ((output (mc-eval input the-global-environment)))
+    (let ((output (actual-value input the-global-environment)))
       (announce-output output-prompt)
       (user-print output)))
   (driver-loop))
@@ -423,18 +426,73 @@
 
 ;;==================================Problem 1=================================================
 (define (actual-value exp env)
-  (force-it (eval exp env)))
+  (force-it (mc-eval exp env)))
 
 (define (force-it obj)
   (if (thunk? obj)
       (actual-value (thunk-exp obj) (thunk-env obj))
       obj))
-(define (delayed exp env)
+(define (delay-it exp env)
   (list 'thunk exp env))
 (define (thunk? obj)
   (tagged-list? obj 'thunk))
 (define (thunk-exp thunk) (cadr thunk))
 (define (thunk-env thunk) (caddr thunk))
+
+(define (list-of-arg-values exps env)
+  (if (no-operands? exps)
+      '()
+      (cons (actual-value (first-operand exps) env) ; if have delayed sign?
+            (list-of-arg-values (rest-operands exps)
+                                env))))
+
+
+
+
+(define (check-delay parameter) 
+  (cond ((pair? parameter)
+         (cond ((eq? (car parameter) 'delayed) true)
+               (else false))
+         )
+        (else false)
+        )
+  )
+(define (first-parameter parameters) (car parameters))
+(define (rest-parameter parameters) (cdr parameters))
+(define (list-of-hybered-args exps parameters env)
+  (if (no-operands? exps)
+      '()
+      (cond  ((check-delay (first-parameter parameters))  ;if it is labeled as delayed
+             (cons (delay-it (first-operand exps) env) ;get the exps, abandon the label
+                    (list-of-hybered-args (rest-operands exps) (rest-parameter parameters)
+                                  env)))         
+            (else 
+             (cons (actual-value (first-operand exps) env) ;if not labeled as delayed, then force it
+                  (list-of-hybered-args (rest-operands exps) (rest-parameter parameters)
+                                      env))
+            ))))
+      
+
+(define (remove-delay-tag parameters)
+  (if (null? parameters)
+      '()
+      (if (pair? (first-parameter parameters))
+          (if (eq? (car (first-parameter parameters)) 'delayed)
+              (cons (cadr (first-parameter parameters)) (remove-delay-tag (rest-parameter parameters)))
+              (error "Not an identifier in: Remove-delay-tag")
+              )
+          (cons (first-parameter parameters) (remove-delay-tag (rest-parameter parameters)))
+          )
+      )
+  )
+      
+      
+      
+      
+      
+      
+      
+      
 
 
 
